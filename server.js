@@ -214,4 +214,18 @@ cron.schedule('45 13 * * *', async () => {
 console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
 
 const PORT = process.env.PORT || 3000;
+
+// TEMP TEST ROUTE - REMOVE AFTER TESTING
+app.get('/test-ig', async (req, res) => {
+  try {
+    const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
+    const igImage = await getNextImage(igImages, IG_QUEUE_FILE);
+    const igResult = await postImageToInstagram(igImage.url, 'Test post 🏔️ #Gatlinburg #CabinLife');
+    res.json({ success: true, postId: igResult.id, image: igImage.name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 app.listen(PORT, () => console.log(`Cabin Poster running on port ${PORT}`));
