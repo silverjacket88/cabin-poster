@@ -2,7 +2,54 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+const fs = require('fs');
 const app = express();
+
+const QUEUE_FILE = '/tmp/image_queue.json';
+
+function loadQueue() {
+  try {
+    if (fs.existsSync(QUEUE_FILE)) {
+      return JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return { remaining: [], used: [] };
+}
+
+function saveQueue(queue) {
+  try { fs.writeFileSync(QUEUE_FILE, JSON.stringify(queue)); } catch (e) {}
+}
+
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function getNextImage(images) {
+  const ids = images.map(img => img.id);
+  let queue = loadQueue();
+
+  // Filter remaining to only valid current images
+  queue.remaining = queue.remaining.filter(id => ids.includes(id));
+
+  // If queue is empty, reshuffle all images (excluding last used if possible)
+  if (queue.remaining.length === 0) {
+    let pool = ids.filter(id => id !== queue.lastUsed);
+    if (pool.length === 0) pool = ids; // only 1 image edge case
+    queue.remaining = shuffleArray(pool);
+    queue.used = [];
+  }
+
+  const nextId = queue.remaining.shift();
+  queue.lastUsed = nextId;
+  queue.used.push(nextId);
+  saveQueue(queue);
+
+  return images.find(img => img.id === nextId);
+}
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
@@ -96,8 +143,8 @@ cron.schedule('45 13 * * *', async () => {
   try {
     const images = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
     if (!images.length) { console.log('[CRON] No images found.'); return; }
-    const randomImage = images[Math.floor(Math.random() * images.length)];
-    console.log(`[CRON] Posting: ${randomImage.name}`);
+    const randomImage = await getNextImage(images);
+    console.log(`[CRON] Posting: ${randomImage.name} (shuffle queue)`);
     const result = await postImageToFacebook(randomImage.url, '');
     console.log(`[CRON] Success. Post ID: ${result.id}`);
   } catch (err) {
