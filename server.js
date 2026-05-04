@@ -3,7 +3,7 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const app = express();
 
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const FB_PAGE_ID = process.env.FB_PAGE_ID;
