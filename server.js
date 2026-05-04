@@ -5,19 +5,22 @@ const cron = require('node-cron');
 const fs = require('fs');
 const app = express();
 
+// ─── QUEUE FILES ─────────────────────────────────────────────────────────────
 const QUEUE_FILE = '/tmp/image_queue.json';
+const IG_QUEUE_FILE = '/tmp/ig_queue.json';
 
-function loadQueue() {
+// ─── QUEUE HELPERS ────────────────────────────────────────────────────────────
+function loadQueue(file) {
   try {
-    if (fs.existsSync(QUEUE_FILE)) {
-      return JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
     }
   } catch (e) {}
   return { remaining: [], used: [] };
 }
 
-function saveQueue(queue) {
-  try { fs.writeFileSync(QUEUE_FILE, JSON.stringify(queue)); } catch (e) {}
+function saveQueue(file, queue) {
+  try { fs.writeFileSync(file, JSON.stringify(queue)); } catch (e) {}
 }
 
 function shuffleArray(arr) {
@@ -28,9 +31,9 @@ function shuffleArray(arr) {
   return arr;
 }
 
-async function getNextImage(images) {
+async function getNextImage(images, queueFile) {
   const ids = images.map(img => img.id);
-  let queue = loadQueue();
+  let queue = loadQueue(queueFile);
 
   // Filter remaining to only valid current images
   queue.remaining = queue.remaining.filter(id => ids.includes(id));
@@ -46,7 +49,7 @@ async function getNextImage(images) {
   const nextId = queue.remaining.shift();
   queue.lastUsed = nextId;
   queue.used.push(nextId);
-  saveQueue(queue);
+  saveQueue(queueFile, queue);
 
   return images.find(img => img.id === nextId);
 }
@@ -54,14 +57,18 @@ async function getNextImage(images) {
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+// ─── ENV VARS ─────────────────────────────────────────────────────────────────
 const FB_PAGE_ID = process.env.FB_PAGE_ID;
 const FB_PAGE_TOKEN = process.env.FB_PAGE_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
+const INSTAGRAM_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
+const INSTAGRAM_DRIVE_FOLDER_ID = process.env.INSTAGRAM_DRIVE_FOLDER_ID;
 
 app.get('/', (req, res) => res.json({ status: 'Cabin Poster API is live' }));
 
+// ─── GOOGLE DRIVE ─────────────────────────────────────────────────────────────
 async function getDriveImages(folderId) {
   const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType+contains+'image'&fields=files(id,name,thumbnailLink,webContentLink)&key=${GOOGLE_API_KEY}`;
   const response = await fetch(url);
@@ -83,6 +90,7 @@ app.get('/images', async (req, res) => {
   }
 });
 
+// ─── FACEBOOK POSTING ─────────────────────────────────────────────────────────
 async function postImageToFacebook(imageUrl, caption) {
   const photoRes = await fetch(`https://graph.facebook.com/v25.0/${FB_PAGE_ID}/photos`, {
     method: 'POST',
@@ -94,6 +102,36 @@ async function postImageToFacebook(imageUrl, caption) {
   return photoData;
 }
 
+// ─── INSTAGRAM POSTING ────────────────────────────────────────────────────────
+async function postImageToInstagram(imageUrl, caption) {
+  // Step 1: Create media container
+  const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${INSTAGRAM_ACCOUNT_ID}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_url: imageUrl,
+      caption: caption || '',
+      access_token: FB_PAGE_TOKEN
+    })
+  });
+  const uploadData = await uploadRes.json();
+  if (uploadData.error) throw new Error('IG upload failed: ' + uploadData.error.message);
+
+  // Step 2: Publish the container
+  const publishRes = await fetch(`https://graph.facebook.com/v25.0/${INSTAGRAM_ACCOUNT_ID}/media_publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      creation_id: uploadData.id,
+      access_token: FB_PAGE_TOKEN
+    })
+  });
+  const publishData = await publishRes.json();
+  if (publishData.error) throw new Error('IG publish failed: ' + publishData.error.message);
+  return publishData;
+}
+
+// ─── ROUTES ───────────────────────────────────────────────────────────────────
 app.post('/post', async (req, res) => {
   try {
     const { message, imageUrl, scheduledTime } = req.body;
@@ -137,19 +175,40 @@ app.post('/generate', async (req, res) => {
   }
 });
 
-// Daily auto-post at 8:45 AM EST every day
+// ─── CRON: Daily auto-post at 8:45 AM EST ────────────────────────────────────
 cron.schedule('45 13 * * *', async () => {
   console.log('[CRON] Daily auto-post triggered at 8:45 AM EST');
+
+  // ── Facebook ──
   try {
-    const images = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
-    if (!images.length) { console.log('[CRON] No images found.'); return; }
-    const randomImage = await getNextImage(images);
-    console.log(`[CRON] Posting: ${randomImage.name} (shuffle queue)`);
-    const result = await postImageToFacebook(randomImage.url, '');
-    console.log(`[CRON] Success. Post ID: ${result.id}`);
+    const fbImages = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
+    if (!fbImages.length) {
+      console.log('[CRON] FB: No images found.');
+    } else {
+      const fbImage = await getNextImage(fbImages, QUEUE_FILE);
+      console.log(`[CRON] FB Posting: ${fbImage.name} (shuffle queue)`);
+      const fbResult = await postImageToFacebook(fbImage.url, '');
+      console.log(`[CRON] FB Success. Post ID: ${fbResult.id}`);
+    }
   } catch (err) {
-    console.error('[CRON] Failed:', err.message);
+    console.error('[CRON] FB Failed:', err.message);
   }
+
+  // ── Instagram ──
+  try {
+    const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
+    if (!igImages.length) {
+      console.log('[CRON] IG: No images found.');
+    } else {
+      const igImage = await getNextImage(igImages, IG_QUEUE_FILE);
+      console.log(`[CRON] IG Posting: ${igImage.name} (shuffle queue)`);
+      const igResult = await postImageToInstagram(igImage.url, '');
+      console.log(`[CRON] IG Success. Post ID: ${igResult.id}`);
+    }
+  } catch (err) {
+    console.error('[CRON] IG Failed:', err.message);
+  }
+
 }, { timezone: 'America/New_York' });
 
 console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
