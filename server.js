@@ -244,5 +244,37 @@ app.get('/test-ig', async (req, res) => {
   }
 });
 
+// TEMP TEST - REMOVE AFTER TESTING
+app.get('/test-with-caption', async (req, res) => {
+  try {
+    // Generate caption
+    const genResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
+        system: `You are a social media copywriter for a luxury cabin rental company in Gatlinburg, Pigeon Forge and Sevierville Tennessee. Write poetic, atmospheric captions that make people want to book immediately. Format: [Caption]\n\n[hashtags]`,
+        messages: [{ role: 'user', content: 'Write a caption for a stunning luxury cabin photo in the Smoky Mountains.' }]
+      })
+    });
+    const genData = await genResponse.json();
+    const fullCaption = genData.content?.[0]?.text || '';
+
+    // Post to Instagram
+    const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
+    const igImage = await getNextImage(igImages, IG_QUEUE_FILE);
+    const igResult = await postImageToInstagram(igImage.url, fullCaption);
+
+    // Post to Facebook
+    const fbImages = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
+    const fbImage = await getNextImage(fbImages, QUEUE_FILE);
+    const fbResult = await postImageToFacebook(fbImage.url, fullCaption);
+
+    res.json({ success: true, caption: fullCaption, fbPostId: fbResult.id, igPostId: igResult.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.listen(PORT, () => console.log(`Cabin Poster running on port ${PORT}`));
