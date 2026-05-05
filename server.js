@@ -97,6 +97,7 @@ Rules:
   });
 
   const data = await response.json();
+  console.log('[CAPTION DEBUG]', JSON.stringify(data));
   const generated = data.content?.[0]?.text?.trim() || '';
 
   let caption = '';
