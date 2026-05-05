@@ -221,4 +221,28 @@ console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
 
 const PORT = process.env.PORT || 3000;
 
+// TEMP TEST ROUTES - REMOVE AFTER TESTING
+app.get('/test-fb', async (req, res) => {
+  try {
+    const fbImages = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
+    const fbImage = await getNextImage(fbImages, QUEUE_FILE);
+    const fbResult = await postImageToFacebook(fbImage.url, '');
+    res.json({ success: true, postId: fbResult.id, image: fbImage.name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/test-ig', async (req, res) => {
+  try {
+    const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
+    const igImage = await getNextImage(igImages, IG_QUEUE_FILE);
+    const igResult = await postImageToInstagram(igImage.url, '');
+    res.json({ success: true, postId: igResult.id, image: igImage.name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 app.listen(PORT, () => console.log(`Cabin Poster running on port ${PORT}`));
