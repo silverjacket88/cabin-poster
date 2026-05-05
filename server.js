@@ -260,7 +260,8 @@ app.get('/test-with-caption', async (req, res) => {
       })
     });
     const genData = await genResponse.json();
-    const fullCaption = genData.content?.[0]?.text || '';
+    console.log('[CAPTION]', JSON.stringify(genData));
+    const fullCaption = genData.content?.[0]?.text || 'Escape to the Smokies. 🏔️ #Gatlinburg #CabinLife #SmokyMountains';
 
     // Post to Instagram
     const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
