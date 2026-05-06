@@ -258,7 +258,7 @@ app.post('/post', async (req, res) => {
 });
 
 // ─── CRON: Daily auto-post at 8:45 AM EST ────────────────────────────────────
-cron.schedule('45 13 * * *', async () => {
+cron.schedule('45 8 * * *', async () => {
   console.log('[CRON] Daily auto-post triggered at 8:45 AM EST');
 
   // ── Facebook ──
