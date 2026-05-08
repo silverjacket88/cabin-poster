@@ -1,304 +1,345 @@
 const express = require('express');
-const cors = require('cors');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
 const fs = require('fs');
+
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// ─── QUEUE FILES ─────────────────────────────────────────────────────────────
-const QUEUE_FILE = '/tmp/image_queue.json';
-const IG_QUEUE_FILE = '/tmp/ig_queue.json';
-const FB_CAPTION_COUNTER_FILE = '/tmp/fb_caption_counter.json';
-const IG_CAPTION_COUNTER_FILE = '/tmp/ig_caption_counter.json';
+// ─── ENV VARS ────────────────────────────────────────────────────────────────
+const FB_PAGE_ID                 = process.env.FB_PAGE_ID;
+const FB_PAGE_TOKEN              = process.env.FB_PAGE_TOKEN;
+const GOOGLE_API_KEY             = process.env.GOOGLE_API_KEY;
+const GOOGLE_DRIVE_FOLDER_ID     = process.env.GOOGLE_DRIVE_FOLDER_ID;      // FB images
+const INSTAGRAM_ACCOUNT_ID       = process.env.INSTAGRAM_ACCOUNT_ID;
+const INSTAGRAM_DRIVE_FOLDER_ID  = process.env.INSTAGRAM_DRIVE_FOLDER_ID;   // IG images
+const ANTHROPIC_API_KEY          = process.env.ANTHROPIC_API_KEY;
 
-// ─── HASHTAGS ─────────────────────────────────────────────────────────────────
-const ALL_HASHTAGS = [
-  '#vacationrental', '#vacationmode', '#MountainCabin', '#CabinGetaway',
+// ─── QUEUE FILE PATHS ────────────────────────────────────────────────────────
+const FB_QUEUE_FILE      = '/tmp/image_queue.json';
+const IG_QUEUE_FILE      = '/tmp/ig_queue.json';
+const FB_COUNTER_FILE    = '/tmp/fb_caption_counter.json';
+const IG_COUNTER_FILE    = '/tmp/ig_caption_counter.json';
+
+// ─── HASHTAG POOL ────────────────────────────────────────────────────────────
+const HASHTAG_POOL = [
+  '#vacationrental', '#vacationmode', '#RiverCabin', '#CabinGetaway',
   '#WeekendGetaway', '#WeekendEscape', '#familygetaway', '#bookdirect',
-  '#mountainretreat', '#cabinlife', '#staycation', '#cabinvacation'
+  '#riverretreat', '#cabinlife', '#staycation', '#cabinvacation'
 ];
 
-const FOOTER = `\n𝗧𝗛𝗘 𝗦𝗠𝗢𝗞𝗬 𝗠𝗢𝗨𝗡𝗧𝗔𝗜𝗡'𝗦 𝗙𝗜𝗡𝗘𝗦𝗧 𝗧𝗛𝗥𝗘𝗘:\nhttps://www.takemetotheriver.us/\nhttps://www.chasingsunsetcabin.com/\nhttps://www.thewthcabin.com/`;
+// ─── POLL FOOTER — 4311 / TAKE ME TO THE RIVER ───────────────────────────────
+const POLL_FOOTER = `\n\n𝗧𝗔𝗞𝗘 𝗠𝗘 𝗧𝗢 𝗧𝗛𝗘 𝗥𝗜𝗩𝗘𝗥 — 𝗦𝗘𝗩𝗜𝗘𝗥𝗩𝗜𝗟𝗟𝗘, 𝗧𝗡\nhttps://www.takemetotheriver.us/`;
 
-// ─── CAPTION COUNTER ──────────────────────────────────────────────────────────
-function loadCaptionCounter(file) {
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+function getRandomHashtags(count = 5) {
+  const shuffled = [...HASHTAG_POOL].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count).join(' ');
+}
+
+function loadCounter(filePath) {
   try {
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return data.count || 0;
+    }
   } catch (e) {}
-  return { postCount: 0 };
+  return 0;
 }
 
-function saveCaptionCounter(file, data) {
-  try { fs.writeFileSync(file, JSON.stringify(data)); } catch (e) {}
+function saveCounter(filePath, count) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify({ count }), 'utf8');
+  } catch (e) {}
 }
 
-function getRandomHashtags() {
-  const shuffled = [...ALL_HASHTAGS].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, 5).join(' ');
+function loadQueue(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return data;
+    }
+  } catch (e) {}
+  return { queue: [], lastPosted: null };
 }
 
-async function generateCaption(counterFile) {
-  const counter = loadCaptionCounter(counterFile);
-  counter.postCount++;
-  saveCaptionCounter(counterFile, counter);
+function saveQueue(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data), 'utf8');
+  } catch (e) {}
+}
 
-  const hashtags = getRandomHashtags();
-  const isPollDay = counter.postCount % 3 === 0;
+// ─── GOOGLE DRIVE ────────────────────────────────────────────────────────────
 
-  // Randomly pick topic theme for variety
-  const themes = ['river', 'sunset', 'mountain', 'general smoky mountain cabin'];
-  const theme = themes[Math.floor(Math.random() * themes.length)];
+async function getDriveImages(folderId) {
+  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType+contains+'image/'&key=${GOOGLE_API_KEY}&fields=files(id,name)`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.files || [];
+}
 
-  let systemPrompt, userPrompt;
+// ─── SHUFFLE QUEUE ───────────────────────────────────────────────────────────
 
-  if (isPollDay) {
-   systemPrompt = `You are a fun, conversational social media writer for luxury cabin rentals in Gatlinburg, Pigeon Forge and Sevierville Tennessee. Write one engaging poll question with 3 answer options.
+async function getNextImage(queueFilePath, folderId) {
+  let { queue, lastPosted } = loadQueue(queueFilePath);
 
-Output ONLY in this exact format with no extra text:
-[Question]
-[Option 1] / [Option 2] / [Option 3]
+  if (!queue || queue.length === 0) {
+    const images = await getDriveImages(folderId);
+    if (!images.length) throw new Error('No images found in Drive folder: ' + folderId);
 
-Rules:
-- Sound like a real person talking to a friend, not a marketer
-- Question should make people stop scrolling and want to answer
-- Options should be short, specific and relatable
-- Mix themes: river cabin, sunset views, mountain lodge, weekend trips, cabin experiences
-- Examples of the RIGHT tone:
-  "What would you rather hear when you wake up? Flowing water / Quiet mountain air / Nothing at all"
-  "Which view would you never get tired of? Right above a river / Endless sunsets / Mountains from every window"
-  "You're planning a trip for people you love—what are you choosing? Cozy river vibes / Sunset dinners / Big mountain getaway"
-- No hashtags, no emojis unless they feel completely natural`;
+    let shuffled = [...images].sort(() => Math.random() - 0.5);
 
-    userPrompt = 'Write one poll question with 3 options.';
-  } else {
-    systemPrompt = `You are a fun, conversational social media writer for luxury cabin rentals in Gatlinburg, Pigeon Forge and Sevierville Tennessee. Write exactly 2 short lines that make people stop scrolling and want to book a cabin.
+    // Never start with the last posted image
+    if (lastPosted && shuffled[0].id === lastPosted) {
+      shuffled = [...shuffled.slice(1), shuffled[0]];
+    }
 
-Rules:
-- Sound like a real person, not a marketer
-- Casual, warm and relatable tone
-- Short and punchy — no flowery poetry
-- Make people feel something or picture themselves there
-- Examples of the RIGHT tone:
-  "Some trips are nice. This one stays with you."
-  "The kind of place you keep thinking about long after you leave."
-  "You deserve a view like this. Just saying."
-- No hashtags
-- No quotes around the lines
-- Exactly 2 lines separated by a line break`;
-
-    userPrompt = 'Write 2 lines for today\'s cabin post.';
+    queue = shuffled;
+    console.log(`[QUEUE] New shuffle cycle: ${queue.length} images`);
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 150,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }]
-    })
-  });
+  const next = queue.shift();
+  saveQueue(queueFilePath, { queue, lastPosted: next.id });
+  return next;
+}
 
-  const data = await response.json();
-    const generated = data.content?.[0]?.text?.trim() || '';
+// ─── ANTHROPIC CAPTION ───────────────────────────────────────────────────────
+
+async function generateCaption(isPollDay) {
+  try {
+    let prompt;
+
+    if (isPollDay) {
+      prompt = `You write social media captions for a luxury riverfront cabin called Take Me to the River located in Sevierville, TN near the Smoky Mountains.
+
+Write a short, casual, conversational poll question for a Facebook/Instagram post.
+Format:
+- One question (max 10 words)
+- Three short answer options separated by " / "
+- Tone: warm, fun, like asking a friend
+- Lean into river, water, and nature vibes
+
+Only output the question and options. Nothing else. No hashtags. No extra text.
+
+Example format:
+What's your perfect river morning?
+Coffee on the dock / Kayaking at sunrise / Sleeping in to the sound of water`;
+    } else {
+      prompt = `You write social media captions for a luxury riverfront cabin called Take Me to the River located in Sevierville, TN near the Smoky Mountains.
+
+Write exactly 2 short, casual, punchy lines for a Facebook/Instagram post.
+- Tone: warm, conversational, like talking to a friend
+- Short and punchy, not poetic or flowery
+- Lean into river sounds, water views, and that relaxed riverfront feeling
+- Do NOT use hashtags
+- Do NOT mention the cabin name or address
+- Just evoke the feeling of being there
+
+Only output the 2 lines. Nothing else.
+
+Examples of the right tone:
+"Some trips are nice. This one stays with you."
+"The kind of place you keep thinking about long after you leave."
+"You deserve a view like this. Just saying."`;
+    }
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const data = await response.json();
+    return data.content?.[0]?.text?.trim() || null;
+  } catch (e) {
+    console.error('[CAPTION] Anthropic API error:', e.message);
+    return null;
+  }
+}
+
+// ─── BUILD FULL CAPTION ──────────────────────────────────────────────────────
+
+async function buildCaption(counterFilePath) {
+  let count = loadCounter(counterFilePath);
+  count = (count % 3) + 1;
+  saveCounter(counterFilePath, count);
+
+  const isPollDay = (count === 3);
+  const aiText = await generateCaption(isPollDay);
+  const hashtags = getRandomHashtags(5);
 
   let caption = '';
 
+  if (aiText) {
+    caption = aiText;
+  }
+
   if (isPollDay) {
-    caption = `${generated}\n${FOOTER}\n\n${hashtags}`;
-  } else {
-    caption = `${generated}\n\n${hashtags}`;
+    caption += POLL_FOOTER;
   }
 
-  return caption;
+  caption += '\n\n' + hashtags;
+
+  return caption.trim();
 }
 
-// ─── QUEUE HELPERS ────────────────────────────────────────────────────────────
-function loadQueue(file) {
-  try {
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (e) {}
-  return { remaining: [], used: [] };
-}
+// ─── POST TO FACEBOOK ────────────────────────────────────────────────────────
 
-function saveQueue(file, queue) {
-  try { fs.writeFileSync(file, JSON.stringify(queue)); } catch (e) {}
-}
+async function postToFacebook(imageFile) {
+  const imageUrl = `https://drive.google.com/uc?export=download&id=${imageFile.id}`;
+  const caption = await buildCaption(FB_COUNTER_FILE);
 
-function shuffleArray(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
+  console.log(`[CRON] FB Posting: ${imageFile.name} (shuffle queue)`);
+  console.log(`[CRON] FB Caption: ${caption.substring(0, 80)}...`);
 
-async function getNextImage(images, queueFile) {
-  const ids = images.map(img => img.id);
-  let queue = loadQueue(queueFile);
-  queue.remaining = queue.remaining.filter(id => ids.includes(id));
-  if (queue.remaining.length === 0) {
-    let pool = ids.filter(id => id !== queue.lastUsed);
-    if (pool.length === 0) pool = ids;
-    queue.remaining = shuffleArray(pool);
-    queue.used = [];
-  }
-  const nextId = queue.remaining.shift();
-  queue.lastUsed = nextId;
-  queue.used.push(nextId);
-  saveQueue(queueFile, queue);
-  return images.find(img => img.id === nextId);
-}
-
-app.use(cors({ origin: '*' }));
-app.use(express.json());
-
-// ─── ENV VARS ─────────────────────────────────────────────────────────────────
-const FB_PAGE_ID = process.env.FB_PAGE_ID;
-const FB_PAGE_TOKEN = process.env.FB_PAGE_TOKEN;
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
-const INSTAGRAM_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
-const INSTAGRAM_DRIVE_FOLDER_ID = process.env.INSTAGRAM_DRIVE_FOLDER_ID;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-
-app.get('/', (req, res) => res.json({ status: 'Cabin Poster API is live' }));
-
-// ─── GOOGLE DRIVE ─────────────────────────────────────────────────────────────
-async function getDriveImages(folderId) {
-  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType+contains+'image'&fields=files(id,name,thumbnailLink,webContentLink)&key=${GOOGLE_API_KEY}`;
-  const response = await fetch(url);
-  const data = await response.json();
-  return (data.files || []).map(f => ({
-    id: f.id,
-    name: f.name,
-    url: `https://drive.google.com/uc?export=view&id=${f.id}`,
-    thumbnail: f.thumbnailLink
-  }));
-}
-
-app.get('/images', async (req, res) => {
-  try {
-    const images = await getDriveImages(req.query.folderId);
-    res.json({ images });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── FACEBOOK POSTING ─────────────────────────────────────────────────────────
-async function postImageToFacebook(imageUrl, caption) {
-  const photoRes = await fetch(`https://graph.facebook.com/v25.0/${FB_PAGE_ID}/photos`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: imageUrl, caption: caption || '', access_token: FB_PAGE_TOKEN })
-  });
-  const photoData = await photoRes.json();
-  if (photoData.error) throw new Error(photoData.error.message);
-  return photoData;
-}
-
-// ─── INSTAGRAM POSTING ────────────────────────────────────────────────────────
-async function postImageToInstagram(imageUrl, caption) {
-  const directUrl = imageUrl.replace('export=view', 'export=download');
-
-  const uploadRes = await fetch(`https://graph.facebook.com/v25.0/${INSTAGRAM_ACCOUNT_ID}/media`, {
+  const res = await fetch(`https://graph.facebook.com/v19.0/${FB_PAGE_ID}/photos`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      image_url: directUrl,
-      caption: caption || '',
+      url: imageUrl,
+      caption: caption,
       access_token: FB_PAGE_TOKEN
     })
   });
-  const uploadData = await uploadRes.json();
-  if (uploadData.error) throw new Error('IG upload failed: ' + uploadData.error.message);
 
+  const data = await res.json();
+  if (data.error) throw new Error(`FB API Error: ${JSON.stringify(data.error)}`);
+
+  console.log(`[CRON] FB Success. Post ID: ${data.id}`);
+  return data;
+}
+
+// ─── POST TO INSTAGRAM ───────────────────────────────────────────────────────
+
+async function postToInstagram(imageFile) {
+  const imageUrl = `https://drive.google.com/uc?export=download&id=${imageFile.id}`;
+  const caption = await buildCaption(IG_COUNTER_FILE);
+
+  console.log(`[CRON] IG Posting: ${imageFile.name} (shuffle queue)`);
+  console.log(`[CRON] IG Caption: ${caption.substring(0, 80)}...`);
+
+  // Step 1: Create media container
+  const uploadRes = await fetch(`https://graph.facebook.com/v19.0/${INSTAGRAM_ACCOUNT_ID}/media`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_url: imageUrl,
+      caption: caption,
+      access_token: FB_PAGE_TOKEN
+    })
+  });
+
+  const uploadData = await uploadRes.json();
+  if (uploadData.error) throw new Error(`IG Upload Error: ${JSON.stringify(uploadData.error)}`);
+
+  const creationId = uploadData.id;
+
+  // Step 2: Wait 5 seconds then publish
   await new Promise(resolve => setTimeout(resolve, 5000));
 
-  const publishRes = await fetch(`https://graph.facebook.com/v25.0/${INSTAGRAM_ACCOUNT_ID}/media_publish`, {
+  const publishRes = await fetch(`https://graph.facebook.com/v19.0/${INSTAGRAM_ACCOUNT_ID}/media_publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      creation_id: uploadData.id,
+      creation_id: creationId,
       access_token: FB_PAGE_TOKEN
     })
   });
+
   const publishData = await publishRes.json();
-  if (publishData.error) throw new Error('IG publish failed: ' + publishData.error.message);
+  if (publishData.error) throw new Error(`IG Publish Error: ${JSON.stringify(publishData.error)}`);
+
+  console.log(`[CRON] IG Success. Post ID: ${publishData.id}`);
   return publishData;
 }
 
-// ─── ROUTES ───────────────────────────────────────────────────────────────────
-app.post('/post', async (req, res) => {
+// ─── DAILY AUTO-POST ─────────────────────────────────────────────────────────
+
+async function runDailyPost() {
+  console.log('[CRON] Daily auto-post triggered at 8:45 AM EST');
+
   try {
-    const { message, imageUrl, scheduledTime } = req.body;
-    const body = { url: imageUrl, caption: message || '', access_token: FB_PAGE_TOKEN };
-    if (scheduledTime) {
-      body.scheduled_publish_time = Math.floor(new Date(scheduledTime).getTime() / 1000);
-      body.published = false;
-    }
-    const photoRes = await fetch(`https://graph.facebook.com/v25.0/${FB_PAGE_ID}/photos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const photoData = await photoRes.json();
-    if (photoData.error) throw new Error(photoData.error.message);
-    res.json({ success: true, id: photoData.id, scheduled: !!scheduledTime });
+    const fbImage = await getNextImage(FB_QUEUE_FILE, GOOGLE_DRIVE_FOLDER_ID);
+    await postToFacebook(fbImage);
+  } catch (err) {
+    console.error('[CRON] FB post failed:', err.message);
+  }
+
+  try {
+    const igImage = await getNextImage(IG_QUEUE_FILE, INSTAGRAM_DRIVE_FOLDER_ID);
+    await postToInstagram(igImage);
+  } catch (err) {
+    console.error('[CRON] IG post failed:', err.message);
+  }
+}
+
+// ─── CRON SCHEDULE — 8:45 AM EST (13:45 UTC) ────────────────────────────────
+
+cron.schedule('45 13 * * *', () => {
+  runDailyPost();
+}, {
+  timezone: 'America/New_York'
+});
+
+console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
+
+// ─── TEST ROUTES ─────────────────────────────────────────────────────────────
+
+// Test Google Drive connection for FB folder
+app.get('/images', async (req, res) => {
+  const folderId = req.query.folderId || GOOGLE_DRIVE_FOLDER_ID;
+  try {
+    const images = await getDriveImages(folderId);
+    res.json({ count: images.length, images });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ─── CRON: Daily auto-post at 8:45 AM EST ────────────────────────────────────
-cron.schedule('45 8 * * *', async () => {
-  console.log('[CRON] Daily auto-post triggered at 8:45 AM EST');
+// Manual trigger — posts to both FB and IG immediately
+app.get('/test-post', async (req, res) => {
+  res.json({ status: 'triggered', message: 'Check Railway logs for results' });
+  await runDailyPost();
+});
 
-  // ── Facebook ──
+// Test FB only
+app.get('/test-fb', async (req, res) => {
   try {
-    const fbImages = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
-    if (!fbImages.length) {
-      console.log('[CRON] FB: No images found.');
-    } else {
-      const fbCaption = await generateCaption(FB_CAPTION_COUNTER_FILE);
-      const fbImage = await getNextImage(fbImages, QUEUE_FILE);
-      console.log(`[CRON] FB Posting: ${fbImage.name} (shuffle queue)`);
-      console.log(`[CRON] FB Caption: ${fbCaption.substring(0, 80)}...`);
-      const fbResult = await postImageToFacebook(fbImage.url, fbCaption);
-      console.log(`[CRON] FB Success. Post ID: ${fbResult.id}`);
-    }
+    const image = await getNextImage(FB_QUEUE_FILE, GOOGLE_DRIVE_FOLDER_ID);
+    const result = await postToFacebook(image);
+    res.json({ success: true, result });
   } catch (err) {
-    console.error('[CRON] FB Failed:', err.message);
+    res.status(500).json({ error: err.message });
   }
+});
 
-  // ── Instagram ──
+// Test IG only
+app.get('/test-ig', async (req, res) => {
   try {
-    const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
-    if (!igImages.length) {
-      console.log('[CRON] IG: No images found.');
-    } else {
-      const igCaption = await generateCaption(IG_CAPTION_COUNTER_FILE);
-      const igImage = await getNextImage(igImages, IG_QUEUE_FILE);
-      console.log(`[CRON] IG Posting: ${igImage.name} (shuffle queue)`);
-      console.log(`[CRON] IG Caption: ${igCaption.substring(0, 80)}...`);
-      const igResult = await postImageToInstagram(igImage.url, igCaption);
-      console.log(`[CRON] IG Success. Post ID: ${igResult.id}`);
-    }
+    const image = await getNextImage(IG_QUEUE_FILE, INSTAGRAM_DRIVE_FOLDER_ID);
+    const result = await postToInstagram(image);
+    res.json({ success: true, result });
   } catch (err) {
-    console.error('[CRON] IG Failed:', err.message);
+    res.status(500).json({ error: err.message });
   }
+});
 
-}, { timezone: 'America/New_York' });
+// Health check
+app.get('/', (req, res) => {
+  res.send('4311 Take Me to the River Auto-Poster — Live ✅');
+});
 
-console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
+// ─── START ───────────────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
-
-
-app.listen(PORT, () => console.log(`Cabin Poster running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`[SERVER] 4311 Take Me to the River Auto-Poster running on port ${PORT}`);
+});
