@@ -105,8 +105,7 @@ Rules:
   });
 
   const data = await response.json();
-  console.log('[CAPTION DEBUG]', JSON.stringify(data));
-  const generated = data.content?.[0]?.text?.trim() || '';
+    const generated = data.content?.[0]?.text?.trim() || '';
 
   let caption = '';
 
@@ -301,30 +300,5 @@ console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
 
 const PORT = process.env.PORT || 3000;
 
-// ─── TEMP TEST ROUTE - REMOVE AFTER TESTING ───────────────────────────────────
-app.get('/test-with-caption', async (req, res) => {
-  try {
-    const fbCaption = await generateCaption(FB_CAPTION_COUNTER_FILE);
-    const igCaption = await generateCaption(IG_CAPTION_COUNTER_FILE);
-
-    const fbImages = await getDriveImages(GOOGLE_DRIVE_FOLDER_ID);
-    const fbImage = await getNextImage(fbImages, QUEUE_FILE);
-    const fbResult = await postImageToFacebook(fbImage.url, fbCaption);
-
-    const igImages = await getDriveImages(INSTAGRAM_DRIVE_FOLDER_ID);
-    const igImage = await getNextImage(igImages, IG_QUEUE_FILE);
-    const igResult = await postImageToInstagram(igImage.url, igCaption);
-
-    res.json({
-      success: true,
-      fbCaption,
-      igCaption,
-      fbPostId: fbResult.id,
-      igPostId: igResult.id
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 app.listen(PORT, () => console.log(`Cabin Poster running on port ${PORT}`));
