@@ -7,13 +7,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── ENV VARS ────────────────────────────────────────────────────────────────
-const FB_PAGE_ID            = process.env.FB_PAGE_ID;
-const FB_PAGE_TOKEN         = process.env.FB_PAGE_TOKEN;
-const GOOGLE_API_KEY        = process.env.GOOGLE_API_KEY;
+const FB_PAGE_ID                 = process.env.FB_PAGE_ID;
+const FB_PAGE_TOKEN              = process.env.FB_PAGE_TOKEN;
+const GOOGLE_API_KEY             = process.env.GOOGLE_API_KEY;
 const GOOGLE_DRIVE_FOLDER_ID     = process.env.GOOGLE_DRIVE_FOLDER_ID;      // FB images
-const INSTAGRAM_ACCOUNT_ID  = process.env.INSTAGRAM_ACCOUNT_ID;
+const INSTAGRAM_ACCOUNT_ID       = process.env.INSTAGRAM_ACCOUNT_ID;
 const INSTAGRAM_DRIVE_FOLDER_ID  = process.env.INSTAGRAM_DRIVE_FOLDER_ID;   // IG images
-const ANTHROPIC_API_KEY     = process.env.ANTHROPIC_API_KEY;
+const ANTHROPIC_API_KEY          = process.env.ANTHROPIC_API_KEY;
 
 // ─── QUEUE FILE PATHS ────────────────────────────────────────────────────────
 const FB_QUEUE_FILE      = '/tmp/image_queue.json';
@@ -23,13 +23,13 @@ const IG_COUNTER_FILE    = '/tmp/ig_caption_counter.json';
 
 // ─── HASHTAG POOL ────────────────────────────────────────────────────────────
 const HASHTAG_POOL = [
-  '#vacationrental', '#vacationmode', '#MountainCabin', '#CabinGetaway',
+  '#vacationrental', '#vacationmode', '#RiverCabin', '#CabinGetaway',
   '#WeekendGetaway', '#WeekendEscape', '#familygetaway', '#bookdirect',
-  '#mountainretreat', '#cabinlife', '#staycation', '#cabinvacation'
+  '#riverretreat', '#cabinlife', '#staycation', '#cabinvacation'
 ];
 
-// ─── POLL FOOTER — 706 / THE WTH CABIN ──────────────────────────────────────
-const POLL_FOOTER = `\n\n𝗧𝗛𝗘 𝗪𝗧𝗛 𝗖𝗔𝗕𝗜𝗡 — 𝗦𝗘𝗩𝗜𝗘𝗥𝗩𝗜𝗟𝗟𝗘, 𝗧𝗡\nhttps://www.thewthcabin.com/`;
+// ─── POLL FOOTER — 4311 / TAKE ME TO THE RIVER ───────────────────────────────
+const POLL_FOOTER = `\n\n𝗧𝗔𝗞𝗘 𝗠𝗘 𝗧𝗢 𝗧𝗛𝗘 𝗥𝗜𝗩𝗘𝗥 — 𝗦𝗘𝗩𝗜𝗘𝗥𝗩𝗜𝗟𝗟𝗘, 𝗧𝗡\nhttps://www.takemetotheriver.us/`;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -111,25 +111,27 @@ async function generateCaption(isPollDay) {
     let prompt;
 
     if (isPollDay) {
-      prompt = `You write social media captions for a luxury mountain cabin called The WTH Cabin located at 706 Shell Mountain Road, Sevierville, TN. 
+      prompt = `You write social media captions for a luxury riverfront cabin called Take Me to the River located in Sevierville, TN near the Smoky Mountains.
 
-Write a short, casual, conversational poll question for a Facebook/Instagram post. 
+Write a short, casual, conversational poll question for a Facebook/Instagram post.
 Format:
 - One question (max 10 words)
 - Three short answer options separated by " / "
 - Tone: warm, fun, like asking a friend
+- Lean into river, water, and nature vibes
 
 Only output the question and options. Nothing else. No hashtags. No extra text.
 
 Example format:
-What's your idea of a perfect morning?
-Coffee on the porch / Sleeping in / Hot tub at sunrise`;
+What's your perfect river morning?
+Coffee on the dock / Kayaking at sunrise / Sleeping in to the sound of water`;
     } else {
-      prompt = `You write social media captions for a luxury mountain cabin called The WTH Cabin located at 706 Shell Mountain Road, Sevierville, TN in the Smoky Mountains.
+      prompt = `You write social media captions for a luxury riverfront cabin called Take Me to the River located in Sevierville, TN near the Smoky Mountains.
 
 Write exactly 2 short, casual, punchy lines for a Facebook/Instagram post.
 - Tone: warm, conversational, like talking to a friend
 - Short and punchy, not poetic or flowery
+- Lean into river sounds, water views, and that relaxed riverfront feeling
 - Do NOT use hashtags
 - Do NOT mention the cabin name or address
 - Just evoke the feeling of being there
@@ -333,11 +335,11 @@ app.get('/test-ig', async (req, res) => {
 
 // Health check
 app.get('/', (req, res) => {
-  res.send('706 WTH Cabin Auto-Poster — Live ✅');
+  res.send('4311 Take Me to the River Auto-Poster — Live ✅');
 });
 
 // ─── START ───────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`[SERVER] 706 WTH Cabin Auto-Poster running on port ${PORT}`);
+  console.log(`[SERVER] 4311 Take Me to the River Auto-Poster running on port ${PORT}`);
 });
