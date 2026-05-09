@@ -282,13 +282,13 @@ async function runDailyPost() {
 
 // ─── CRON SCHEDULE — 8:45 AM EST (13:45 UTC) ────────────────────────────────
 
-cron.schedule('45 13 * * *', () => {
+cron.schedule('0 13 * * *', () => {
   runDailyPost();
 }, {
   timezone: 'America/New_York'
 });
 
-console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
+console.log('[CRON] Scheduled: daily auto-post at 8:00 AM EST');
 
 // ─── TEST ROUTES ─────────────────────────────────────────────────────────────
 
