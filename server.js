@@ -296,7 +296,7 @@ cron.schedule('0 8 * * *', async () => {
 
 }, { timezone: 'America/New_York' });
 
-console.log('[CRON] Scheduled: daily auto-post at 8:45 AM EST');
+console.log('[CRON] Scheduled: daily auto-post at 8:00 AM EST');
 
 const PORT = process.env.PORT || 3000;
 
