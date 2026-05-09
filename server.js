@@ -282,9 +282,9 @@ async function runDailyPost() {
   }
 }
 
-// ─── CRON SCHEDULE — 8:45 AM EST (13:45 UTC) ────────────────────────────────
+// ─── CRON SCHEDULE — 8:00 AM EST (13:45 UTC) ────────────────────────────────
 
-cron.schedule('0 13 * * *', () => {
+cron.schedule('0 8 * * *', () => {
   runDailyPost();
 }, {
   timezone: 'America/New_York'
