@@ -135,6 +135,8 @@ Write exactly 2 short, casual, punchy lines for a Facebook/Instagram post.
 - Do NOT use hashtags
 - Do NOT mention the cabin name or address
 - Just evoke the feeling of being there
+- Vary your angle every time — sometimes the view, sometimes the silence, sometimes arriving, sometimes who you'd bring
+- Never repeat the same theme, feeling, or imagery two days in a row
 
 Only output the 2 lines. Nothing else.
 
