@@ -267,7 +267,7 @@ async function postToInstagram(imageFile) {
 // ─── DAILY AUTO-POST ─────────────────────────────────────────────────────────
 
 async function runDailyPost() {
-  console.log('[CRON] Daily auto-post triggered at 8:45 AM EST');
+  console.log('[CRON] Daily auto-post triggered at 8:00 AM EST');
 
   try {
     const fbImage = await getNextImage(FB_QUEUE_FILE, GOOGLE_DRIVE_FOLDER_ID);
@@ -284,7 +284,7 @@ async function runDailyPost() {
   }
 }
 
-// ─── CRON SCHEDULE — 8:00 AM EST (13:45 UTC) ────────────────────────────────
+// ─── CRON SCHEDULE — 8:00 AM EST (13:00 UTC) ────────────────────────────────
 
 cron.schedule('0 8 * * *', () => {
   runDailyPost();
